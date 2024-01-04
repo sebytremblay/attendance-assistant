@@ -1,6 +1,8 @@
 # Ignore bianries
 */__pycache__
 */.vscode
+*/myenv
+*/.DS_Store
 
 # Include examples and output folders but not the data inside it
 */examples/*
