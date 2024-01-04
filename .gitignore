@@ -1,0 +1,7 @@
+# Ignore bianries
+*/__pycache__
+*/.vscode
+
+# Include examples and output folders but not the data inside it
+*/examples/*
+*/output/*
