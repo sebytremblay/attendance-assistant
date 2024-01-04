@@ -4,6 +4,7 @@ import os
 import shutil
 
 from google.cloud import videointelligence_v1 as videointelligence
+from PIL import Image
 
 class FaceDetection:
     def __init__(self, video_path, fps, output_folder = "./output", purge_output_on_launch = True, face_frame_padding = 25):
@@ -120,7 +121,7 @@ class FaceDetection:
         # Return the first result, because a single video was processed.
         return result.annotation_results[0]
     
-    def save_detected_faces(self):
+    def __save_indexed_face_frames(self):
         """Detect and save the first, middle, and last frames of faces in a video."""
         
         annotation_result = self.__detect_faces()
@@ -131,6 +132,7 @@ class FaceDetection:
 
         for annotation in annotation_result.face_detection_annotations:
             for track in annotation.tracks:
+                # Get the timestamps for each event
                 start_offset_seconds = self.__get_time(track.segment.start_time_offset)
                 end_offset_seconds = self.__get_time(track.segment.end_time_offset)
                 midpoint_offset_seconds = (start_offset_seconds + end_offset_seconds) / 2
@@ -155,3 +157,22 @@ class FaceDetection:
                     self.__capture_and_save_frame(cap, frame_num, box, descriptor)
 
         cap.release()
+    
+    def __save_face_thumbnails(self):
+        """Detect and save the thumbnails of faces in a video"""
+        
+        # Process the video for faces
+        video_annotations = self.__detect_faces()
+        
+        counter = 1
+        for annotation in video_annotations.face_detection_annotations:
+            # Convert the byte string to a bytes object and use it to create an image
+            image = Image.open(io.BytesIO(annotation.thumbnail))
+
+            # Save the image to a file
+            image.save(f"{self.__output_folder}/thumbnail_{counter}.png")
+            counter += 1
+            
+    def run(self):
+        """Runs the face detection algorithm on the loaded video."""
+        self.__save_indexed_face_frames()

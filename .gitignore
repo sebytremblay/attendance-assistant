@@ -1,9 +1,10 @@
 # Ignore bianries
-*/__pycache__
-*/.vscode
-*/myenv
-*/.DS_Store
+**/__pycache__
+**/.vscode
+**/myenv
+**/.DS_Store
 
-# Include examples and output folders but not the data inside it
-*/examples/*
-*/output/*
+# Exclude sensitive data in folders
+**/examples/**
+**/output/**
+**/training_data/**
