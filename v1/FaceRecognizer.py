@@ -3,6 +3,7 @@ import time
 import sys
 import os
 
+from PIL import Image
 from azure.cognitiveservices.vision.face import FaceClient
 from msrest.authentication import CognitiveServicesCredentials
 from azure.cognitiveservices.vision.face.models import TrainingStatusType, QualityForRecognition, APIErrorException
@@ -96,19 +97,19 @@ class FaceRecognizer:
                         return_face_attributes=['qualityForRecognition']
                     )
                     if not faces:
-                        print("No faces detected in the image.")
+                        print("No faces detected in the image.\n")
                         return
 
                     # Checks detected faces for suitable quality
                     face_ids = [face.face_id for face in faces if face.face_attributes.quality_for_recognition in [QualityForRecognition.high, QualityForRecognition.medium]]
                     if not face_ids:
-                        print("No faces of suitable quality for recognition.")
+                        print("No faces of suitable quality for recognition.\n")
                         return
 
                     # Attempts to identify the faces
                     results = self.face_client.face.identify(face_ids, self.person_group_id)
                     if not results:
-                        print('No person identified in the person group.')
+                        print('No person identified in the person group.\n')
                         return
 
                     # Outputs all validated detections
@@ -120,11 +121,11 @@ class FaceRecognizer:
                                 identified_face.candidates[0].person_id,
                                 self.person_group_id
                             )
-                            print('Verification result: {}. Confidence: {}'.format(verify_result.is_identical, verify_result.confidence))
+                            print('Verification result: {}. Confidence: {}\n'.format(verify_result.is_identical, verify_result.confidence))
                         else:
-                            print('No person identified for face ID {} in image.'.format(identified_face.face_id))
+                            print('No person identified for face ID {} in image.\n'.format(identified_face.face_id))
                 except APIErrorException as api_err:
-                    print("API Error:", api_err.message)
+                    print(f"API Error:{api_err.message}\n")
                 except Exception as e:
                     print("Error during API call:", str(e))
         except FileNotFoundError:
@@ -168,8 +169,11 @@ class FaceRecognizer:
             image_paths (list of str): List of image file paths containing the person's face.
         """
         for image_path in image_paths:
-            with open(image_path, 'rb') as image_stream:
-                try:
+            # Prevent call rate limit excess
+            time.sleep(5)
+            
+            try:
+                with open(image_path, 'rb') as image_stream:
                     detected_faces = self.face_client.face.detect_with_stream(
                         image=image_stream,
                         detection_model='detection_03',
@@ -177,10 +181,17 @@ class FaceRecognizer:
                         return_face_attributes=['qualityForRecognition']
                     )
                     for face in detected_faces:
-                        if face.face_attributes.quality_for_recognition == QualityForRecognition.high:
+                        if face.face_attributes.quality_for_recognition == QualityForRecognition.high \
+                            or face.face_attributes.quality_for_recognition == QualityForRecognition.medium:
+                            # Reset the stream position to the beginning after reading it for size
+                            image_stream.seek(0)
+                            
                             self.face_client.person_group_person.add_face_from_stream(
                                 self.person_group_id, person.person_id, image_stream
                             )
                             print(f"Face added to person {person.person_id} from image {image_path}")
-                except APIErrorException as e:
-                    print(f"Failed to process image {image_path}: {e.message}")
+            except APIErrorException as e:
+                print(f"Failed to process image {image_path}: {e.message}")
+            except Exception as e:
+                # Adding a generic exception catch for other potential errors
+                print(f"An error occurred with image {image_path}: {e}")

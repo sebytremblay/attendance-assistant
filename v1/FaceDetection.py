@@ -106,6 +106,7 @@ class FaceDetection:
         context = videointelligence.VideoContext(face_detection_config=config)
 
         # Start the asynchronous request
+        print("\nProcessing video for face detection annotations.")
         operation = client.annotate_video(
             request={
                 "features": [videointelligence.Feature.FACE_DETECTION],
@@ -114,9 +115,8 @@ class FaceDetection:
             }
         )
 
-        print("\nProcessing video for face detection annotations.")
         result = operation.result(timeout=300)
-        print("\nFinished processing.\n")
+        print("\nFinished processing.")
 
         # Return the first result, because a single video was processed.
         return result.annotation_results[0]
@@ -173,6 +173,117 @@ class FaceDetection:
             image.save(f"{self.__output_folder}/thumbnail_{counter}.png")
             counter += 1
             
-    def run(self):
+    def run_face_detection(self):
         """Runs the face detection algorithm on the loaded video."""
         self.__save_indexed_face_frames()
+            
+    def annotate_video_tracks(self):
+        """Annotate the video with bounding boxes on detected faces and save it."""
+        # Load the video and process it for face detection
+        video_annotations = self.__detect_faces()
+
+        # Open the original video and prepare a VideoWriter object to output the annotated video
+        cap = cv2.VideoCapture(self.__video_path)
+        if not cap.isOpened():
+            print("Error opening video file.")
+            return
+
+        # Obtain video properties
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+
+        # Define the codec and create VideoWriter object
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(f'{self.__output_folder}/annotated_video.mp4', fourcc, fps, (width, height))
+
+        # Process video and annotate frames
+        for annotation in video_annotations.face_detection_annotations:
+            for track in annotation.tracks:
+                # For each segment of a detected face, draw bounding boxes
+                for timestamped_object in track.timestamped_objects:
+                    frame_num = int(self.__get_time(timestamped_object.time_offset) * self.__fps)
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+                    ret, frame = cap.read()
+                    if not ret:
+                        continue
+
+                    box = timestamped_object.normalized_bounding_box
+                    x1, y1, x2, y2 = int(box.left * width), int(box.top * height), int(box.right * width), int(box.bottom * height)
+
+                    # Draw rectangle on the frame
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+                    # Write the frame with the bounding box
+                    out.write(frame)
+
+        # Release everything when job is finished
+        cap.release()
+        out.release()
+        
+    def annotate_video(self):
+        """Annotate the entire video, adding bounding boxes to faces when they appear on screen."""
+        video_annotations = self.__detect_faces()
+        
+        print("\nAnnotating video with face outlines.")
+
+        # Prepare a mapping of frame numbers to face bounding boxes
+        face_frames = {}
+        for annotation in video_annotations.face_detection_annotations:
+            for track in annotation.tracks:
+                for timestamped_object in track.timestamped_objects:
+                    frame_num = int(self.__get_time(timestamped_object.time_offset) * self.__fps)
+                    if frame_num not in face_frames:
+                        face_frames[frame_num] = []
+                    face_frames[frame_num].append(timestamped_object.normalized_bounding_box)
+                    
+        # Fill any missing gaps
+        for annotation in video_annotations.face_detection_annotations:
+            for track in annotation.tracks:
+                start_offset_seconds = self.__get_time(track.segment.start_time_offset)
+                end_offset_seconds = self.__get_time(track.segment.end_time_offset)
+                
+                frames_in_track = int((end_offset_seconds - start_offset_seconds) * self.__fps)
+                starting_frame = int(start_offset_seconds * self.__fps)
+                
+                prev_boxes = []
+                
+                for frame in range(starting_frame, starting_frame + frames_in_track):
+                    if frame not in face_frames:
+                        face_frames[frame] = prev_boxes
+                    else:
+                        prev_boxes = face_frames[frame]
+
+        # Open the original video and prepare a VideoWriter object to output the annotated video
+        cap = cv2.VideoCapture(self.__video_path)
+        if not cap.isOpened():
+            print("Error opening video file.")
+            return
+
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(f'{self.__output_folder}/annotated_video.mp4', fourcc, fps, (width, height))
+
+        # Process each frame of the video
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        for frame_num in range(total_frames):
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            # Check if the current frame has faces and annotate them
+            if frame_num in face_frames:
+                for box in face_frames[frame_num]:
+                    x1, y1, x2, y2 = int(box.left * width), int(box.top * height), int(box.right * width), int(box.bottom * height)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+            out.write(frame)  # Write the frame (with or without annotations)
+
+        print("\nFinished annotating video.\n")
+
+        # Release everything when job is finished
+        cap.release()
+        out.release()

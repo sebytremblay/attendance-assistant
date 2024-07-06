@@ -42,11 +42,11 @@ class Controller:
             fps (int): The number of frames per second to process in the video.
         """
         # Creates new detection object and detects faces
-        face_detector = FaceDetection(video_path, fps)
-        face_detector.run()
+        face_detector = FaceDetection(video_path, fps, face_frame_padding=50)
+        face_detector.run_face_detection()
         
         # Retrieve all image file paths from the output directory
         for image_file in os.listdir(face_detector._FaceDetection__output_folder):
             # Identifies faces on each image
             image_path = os.path.join(face_detector._FaceDetection__output_folder, image_file)
-            self.face_recognizer.identify_faces(image_path)       
+            self.face_recognizer.identify_faces(image_path)     
