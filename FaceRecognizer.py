@@ -2,18 +2,16 @@ import uuid
 import time
 import sys
 import os
+import cv2
 
+from io import BytesIO
 from PIL import Image
 from azure.cognitiveservices.vision.face import FaceClient
 from msrest.authentication import CognitiveServicesCredentials
 from azure.cognitiveservices.vision.face.models import TrainingStatusType, QualityForRecognition, APIErrorException
 
 class FaceRecognizer:
-    """
-    A class for recognizing and identifying faces using Azure Cognitive Services.
-    """
-
-    def __init__(self, key, endpoint):
+    def __init__(self, key, endpoint, person_group_id=""):
         """
         Initialize the FaceRecognizer with Azure credentials.
 
@@ -22,9 +20,14 @@ class FaceRecognizer:
             endpoint (str): Azure vision endpoint.
         """
         self.face_client = FaceClient(endpoint, CognitiveServicesCredentials(key))
-        self.person_group_id = str(uuid.uuid4())
-
-    def create_person_group(self):
+        
+        if not person_group_id:
+            self.person_group_id = str(uuid.uuid4())
+            self.__initialize_person_group()
+        else:
+            self.person_group_id = person_group_id
+        
+    def __initialize_person_group(self):
         """
         Create a person group for face recognition.
         """
@@ -55,7 +58,7 @@ class FaceRecognizer:
             Person: The created person object.
         """
         return self.face_client.person_group_person.create(self.person_group_id, name)
-
+    
     def train_person_group(self):
         """
         Train the person group with added persons and faces.
@@ -72,68 +75,89 @@ class FaceRecognizer:
                 self.face_client.person_group.delete(person_group_id=self.person_group_id)
                 sys.exit('Training the person group has failed.')
             time.sleep(5)
-
-    def identify_faces(self, test_image_path):
-        """
-        Identify faces in a given image against the trained person group.
+            
+    def detect_faces(self, frame_buffer):
+        """Detects faces in an image.
 
         Args:
-            test_image_path (str): File path of the image in which faces are to be identified.
-
+            frame_buffer (BufferedReader): the buffer containing the image data.
+            
         Returns:
-            None: Prints out identification results and verification.
+            DetectedFace[]: the faces detected in the image.
         """
-        print('Identifying faces in image:', test_image_path)
+        print('Detecting faces in image buffer')
         time.sleep(10)  # Pausing to avoid rate limit on free account
 
         try:
-            with open(test_image_path, 'rb') as image_stream:
-                try:
-                    # Detect Faces in the image
-                    faces = self.face_client.face.detect_with_stream(
-                        image=image_stream,
-                        detection_model='detection_03',
-                        recognition_model='recognition_04',
-                        return_face_attributes=['qualityForRecognition']
-                    )
-                    if not faces:
-                        print("No faces detected in the image.\n")
-                        return
-
-                    # Checks detected faces for suitable quality
-                    face_ids = [face.face_id for face in faces if face.face_attributes.quality_for_recognition in [QualityForRecognition.high, QualityForRecognition.medium]]
-                    if not face_ids:
-                        print("No faces of suitable quality for recognition.\n")
-                        return
-
-                    # Attempts to identify the faces
-                    results = self.face_client.face.identify(face_ids, self.person_group_id)
-                    if not results:
-                        print('No person identified in the person group.\n')
-                        return
-
-                    # Outputs all validated detections
-                    for identified_face in results:
-                        if len(identified_face.candidates) > 0:
-                            print('Person is identified for face ID {} in image, with a confidence of {}.'.format(identified_face.face_id, identified_face.candidates[0].confidence))
-                            verify_result = self.face_client.face.verify_face_to_person(
-                                identified_face.face_id,
-                                identified_face.candidates[0].person_id,
-                                self.person_group_id
-                            )
-                            print('Verification result: {}. Confidence: {}\n'.format(verify_result.is_identical, verify_result.confidence))
-                        else:
-                            print('No person identified for face ID {} in image.\n'.format(identified_face.face_id))
-                except APIErrorException as api_err:
-                    print(f"API Error:{api_err.message}\n")
-                except Exception as e:
-                    print("Error during API call:", str(e))
-        except FileNotFoundError:
-            print(f"The file {test_image_path} was not found.")
+            # Detect Faces in the image
+            faces = self.face_client.face.detect_with_stream(
+                image=frame_buffer,
+                detection_model='detection_03',
+                recognition_model='recognition_04',
+                return_face_attributes=['qualityForRecognition']
+            )
+            
+            print(f"Detected {len(faces)} faces in image buffer.\n")
+            return faces
+        except APIErrorException as api_err:
+            print(f"API Error:{api_err.message}\n")
         except Exception as e:
-            print("Error opening the image file:", str(e))
+            print(f"Error during API call: {e}\n")
 
+    def identify_faces(self, frame_buffer):
+        """
+        Identify faces in a given frame buffer against the trained person group.
 
+        Args:
+            frame_buffer (BufferedReader): Data for the image to process.
+
+        Returns:
+            IdentifyResult[]: all identified persons in image. 
+        """
+        time.sleep(10)  # Pausing to avoid rate limit on free account
+
+        # Detects faces in the buffer
+        faces = self.detect_faces(frame_buffer)
+
+        # Checks detected faces for suitable quality
+        accepted_quality = [QualityForRecognition.high, QualityForRecognition.medium]
+        face_ids = [
+            face.face_id for face in faces 
+            if face.face_attributes.quality_for_recognition in accepted_quality]
+        if not face_ids:
+            print("No faces of suitable quality for recognition.\n")
+            return []
+
+        # Attempts to identify the faces
+        results = self.face_client.face.identify(face_ids, self.person_group_id)
+        print(f"Identified {len(results)} person(s) from the person group.\n")
+        return results
+
+    
+    def __capture_frame(self, cap, frame_num):
+        """Captures the image at the given frame index.
+
+        Args:
+            cap (cv2.VideoCapture): Video capture object.
+            frame_num (int): Frame number to capture.
+            
+        Returns:
+            BufferedReader: A file-like object with the image data.
+        """
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+        ret, frame = cap.read()
+        
+        if not ret:
+            print(f"Failed to capture frame number {frame_num}.")
+            return None
+        
+        # Convert the frame (numpy.ndarray) to a bytes object
+        _, buffer = cv2.imencode('.jpg', frame) 
+        io_buf = BytesIO(buffer) 
+        
+        # Return the BytesIO buffer which acts like a BufferedReader
+        return io_buf
+    
     def add_training_data(self, training_data_directory):
         """
         Add training data from the given directory.
@@ -149,14 +173,15 @@ class FaceRecognizer:
             if os.path.isdir(person_path):
                 # Create a person for the subfolder
                 try:
-                    person = self.create_person(person_name)
-                    print(f"Created person: {person_name}")
-
                     # Get all image file paths
                     image_urls = [os.path.join(person_path, img) for img in os.listdir(person_path) if img.lower().endswith(('.png', '.jpg', '.jpeg'))]
-
-                    # Add faces to this person from each image
-                    self.add_faces_to_person(person, image_urls)
+                    
+                    # If training data for this person exists, create a new person
+                    if len(image_urls) > 0:
+                        person = self.create_person(person_name)
+                        self.add_faces_to_person(person, image_urls)
+                        
+                        print(f"Created person: {person_name}")
                 except APIErrorException as e:
                     print(f"Failed to add {person_name}: {e.message}")
 
@@ -195,3 +220,41 @@ class FaceRecognizer:
             except Exception as e:
                 # Adding a generic exception catch for other potential errors
                 print(f"An error occurred with image {image_path}: {e}")
+        
+    
+    def recognize_faces(self, video_path, frame_interval):
+        """Iterates through video at give rate, identifying all detected faces.
+
+        Args:
+            video_path (str): The path to target video.
+            frame_interval (int): The rate to iterate the video at.
+            
+        Returns:
+            None: Prints all identified faces.
+        """
+        # Load video for analysis
+        cap = cv2.VideoCapture(video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        # Initiates empty set to track identified people
+        attendees = set()
+        
+        # Iterate through frames at specified rate
+        for frame_num in range(0, total_frames, frame_interval):
+            # Avoids rate limit for Azure API
+            time.sleep(5)
+            
+            # Gets the current frame and identifies all faces in it
+            curr_frame = self.__capture_frame(cap, frame_num)
+            identified_faces = self.identify_faces(curr_frame)
+            
+            # Log the names of everyone in the frame
+            for person in identified_faces:
+                if len(person.candidates) > 0:
+                    person = self.face_client.person_group_person.get(self.person_group_id, person.candidates[0].person_id)
+                    attendees.add(person.name)
+                else:
+                    attendees.add("Unknown_Person")
+                
+        # Once all frames are processed, print all the apparent names
+        print(attendees)  
