@@ -10,3 +10,4 @@ output/
 training_data/
 **/Credentials.py
 **/__init__.py
+.env
