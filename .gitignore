@@ -5,7 +5,8 @@
 **/.DS_Store
 
 # Exclude sensitive data in folders
-**/examples/**
-**/output/**
-**/training_data/**
-**/credentials.py
+examples/**
+output/
+training_data/
+**/Credentials.py
+**/__init__.py
